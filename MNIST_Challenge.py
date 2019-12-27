@@ -12,20 +12,21 @@ from sklearn.model_selection import train_test_split
 
 
 class mnist(object):
-    """ This class will build the perceptron classifiers as ten
+    """ This class will build the neural network with one hidden layer and ten
         outputs to classify each number from 0 to 9. The sizes of the neural
         network are held in an array delcaring the size of the input (i.e. 784),
-        the size of output neurons (i.e. 10), and the alpha defaulted to .1.
-        When initializing the mnist object, the alpha can be changed to 0.01 or
-        0.001. """
+        the size of the hidden neurons (e.g. 100), and the alpha fixed to .1.
+        The network is pre-initialized with sizes [784, 100, 10] and an alpha
+        learning rate of .1. """
 
-    def __init__(self, sizes=[784, 10], alpha=.1):
+    def __init__(self, sizes=[784, 100, 10], alpha=.1):
         """ Initializing the number of network layers, number of input nodes
             and number of hidden neurons and number of output neurons. """
         self = self
-        self.num_layers = len(sizes) #Creating network layers, ie [784, 10]
+        self.num_layers = len(sizes) #Creating network layers, ie [784,20,10]
         self.num_input = sizes[0] 
-        self.num_output = sizes[1]
+        self.num_hidden = sizes[1]
+        self.num_output = sizes[2]
         self.alpha = alpha #Learning rate
 
 
@@ -64,7 +65,9 @@ class mnist(object):
             the hidden layer in a fully connected Neural Network. """
         inputs = data.shape[1] #784 inputs/pixels
 
-        self.output_weights = np.random.uniform(-0.5, 0.5, size=(self.num_output, inputs))#randn(self.num_output, self.num_hidden)
+        self.hidden_weights = np.random.uniform(-0.5, 0.5, size=(self.num_hidden, inputs))#.randn(self.num_hidden, inputs)#(5, 784)
+        self.output_weights = np.random.uniform(-0.5, 0.5, size=(self.num_output, self.num_hidden))#randn(self.num_output, self.num_hidden)
+        self.hidden_bias = np.ones((self.num_hidden, 1))
         self.output_bias = np.ones((self.num_output, 1))
 
 
@@ -80,50 +83,85 @@ class mnist(object):
         list_labels[list_labels == 1] = 0.99 #Value 1 prevents weight updates
 
         return list_labels #Returns an array of 10 where 0.01 is 0 and 0.99 is 1
+
+        
+    def add_bias(self, data): #This function is not used, but helpful to have.
+        """ This function will modify the data by adding a column of number
+            1 to the data serving as a bias for our classifier. """
+        samples = data.shape[0]
+        onez = np.ones((samples, 1))
+
+        return np.hstack((onez, data)) #Column-wise/horizontal array stacking
     
 
-    def perceptron_training(self, features, label):
+    def sigmoid(self, z): #Activation function for Network Classification
+        """ This is a sigmoid neuron where the data point z= w*x + bias and
+            so when the data is very large and positive it returns
+            approximately 1, and when the data is very large and negative it
+            returns approximately 0. """
+        return (1.0 / (1.0 + np.exp(-z)))
+    
+
+    def sigmoid_prime(self, z):
+        """ The sigmoid prime function calculates the derivative of the sigmoid
+            or activation function. This function is used to compute the gradient
+            descent using a back-propagation method. """
+        return (self.sigmoid(z) * (1 - self.sigmoid(z)))
+
+
+    def feed_forward_prediction(self, data_points):
+        """ In a feed forward perceptron, each dimension is multiplied
+            by the layer's weights and the data points and the results are
+            added together to the bias. We call our activation function
+            using the sigmoid activation. If the total is greater than the
+            threshold the neuron fires close to 1, else close to 0. """
+        data_points = np.array(data_points, ndmin=2).T
+        #a is the vector of activations of the second (hidden) layer of neurons
+        h = self.sigmoid(np.dot(self.hidden_weights, data_points) +
+                         self.hidden_bias)
+        
+        #o is the vector of activations of the output layer of neurons
+        o = self.sigmoid(np.dot(self.output_weights, h) +
+                         self.output_bias)
+
+        return h, o #Important to save hidden/output values for back-prop algo
+
+
+    def back_propagation(self, features, labels):
         """ This function is to update the weights using Stochastic Gradient
             Descent. The weights are updated with the gradient calculations
             from the feed forward prediction and then passed back using the
             back propagation algorithm. """
-        label = np.array(label, ndmin=2).T #Avoiding matrix multiplication bugs
-        new = (self.alpha * (label - self.ff_prediction(features)) * features)
-        self.output_weights +=  new
+        hidden_output, network_output = self.feed_forward_prediction(features)#(5,1),(10,1)
+        label = np.array(labels, ndmin=2).T #Avoiding matrix multiplication bugs
+        fts = np.array(features, ndmin=2)
+        output_errors = label - network_output #(10,1)
+        hidden_errors = np.dot(self.output_weights.T, output_errors)#(10,5).T(10,1)=(5,1)
 
-        self.alpha /= (1 + .0001 * 1) #Learning rate decay: reduce over-fitting
+        """SDG: Updating the output weights. """
+        delta_output = output_errors * self.sigmoid_prime(network_output)#(10,1)
+        self.output_weights += self.alpha * np.dot(delta_output, hidden_output.T)
+
+        """SDG: Updating the hidden weights. """
+        delta_hidden = hidden_errors * self.sigmoid_prime(hidden_output) 
+        self.hidden_weights += self.alpha * np.dot(delta_hidden, fts) #(5,1)(1,784)=(5,784)      
+
+        self.alpha /= (1 + .0001*1) #Learning rate decay to reduce over-fitting
         
-        return new
-
-
-    def dot_prod(self, data):
-        """ Returns the dot product of the weights and the data. It really is a
-            matrix multiplication of a 1x784 dot 784x10 = 10x1 per data point.
-            This is a helper function. """
-        data = np.array(data, ndmin=2).T
-        return (np.dot(self.output_weights, data) + self.output_bias)
-
-
-    def ff_prediction(self, data):
-        """ Will return the prediction of where there is a perceptron match.
-            The prediction will be a 10x1 matrix with 1 where the product has
-            been greater than 0. Else 0. If the total is greater than the
-            threshold then the neuron fires 1,
-            else 0."""
-        return np.where(self.dot_prod(data) >= 0.0, 1, 0) #THE MAGIC
+        return hidden_output, network_output, hidden_errors, output_errors
 
 
     def prediction(self, features):
         """ Simple prediction function that returns max index of the output. """
-        output = self.ff_prediction(features) #Perceptron Output(10,1)
+        output = self.feed_forward_prediction(features)[1] #Network output(10,1)
 
         return np.argmax(output, axis=0), np.max(output) #Index & percentage
 
-
+    
     def test(self, features, label):
         """ Simple function to test to test the accuracy of a single data. """
         prediction, percentage =  self.prediction(features)
-        correct = (prediction == label) * 1
+        correct = (prediction[0] == label) * 1
         
         return prediction, int(label), int(correct[0]), percentage
 
@@ -158,19 +196,8 @@ class mnist(object):
         return c_matrix
 
 
-    def display_confusion(self, confusion_matrix):
-        """ This function shall display the confusion matryx. """
-        for x in range(len(confusion_matrix)):
-            print(*confusion_matrix[x], sep="\t")
-
-
-###########Training with Perceptron Rule############################
-
-###########Experiment 1#############################################
-#Train the perceptrons with learning rates: η = 0.001, 0.01, and 0.1
-#Repeat for 50 epochs.
-####################################################################
-m = mnist(alpha=0.1) #learning rates: η = 0.001, 0.01, and 0.1
+###########Training of Neural Network###########################
+m = mnist()
 error = []
 era = {}
 epochs = 50
@@ -187,47 +214,75 @@ X_train, X_test, y_train, y_test = train_test_split(features,
                                                 digit, test_size=0.2,
                                                 random_state=42)
 m.init_weights(X_train)
-labels = m.init_labels(y_train)
+
+###########Experiment 1#########################################
+#For experiment 1, train one networks, using 20, 50, and 100
+#hidden units in the hidden layer using .1 for learning rate 
+################################################################
+X_train1 = X_train
+y_train1 = y_train
+labels1 = m.init_labels(y_train)
+
+###########Experiment 2#########################################
+#For experiment 2, train two networks, using respectively
+#one half and one quarter of the training examples for training
+################################################################
+#X_train1 = X_train[:5000] #X_Train has a size of 7,500 data points
+#X_train2 = X_train[5000:7500]
+#y_train1 = y_train[:5000]
+#y_train2 = y_train[5000:7500]
+#labels1 = m.init_labels(y_train1)
+#labels2 = m.init_labels(y_train2)
 
 
 for e in range(epochs):
     print("Epoch: ", e + 1)
 
-    for i in range(len(X_train)): m.perceptron_training(X_train[i], labels[i])
-    
-    train_c, train_w = m.evaluate_network(X_train, y_train)
+    #Training two different sets on the same network using train1 & train2
+    for i in range(len(X_train1)): m.back_propagation(X_train1[i], labels1[i])
+    #for i in range(len(X_train2)): m.back_propagation(X_train2[i], labels2[i])
+
+    train_c, train_w = m.evaluate_network(X_train1, y_train1)
     training_accuracy1 = train_c / ( train_c + train_w)
-    print("Network's training accuracy: ", training_accuracy1)
+    print("Network's training1 accuracy: ", training_accuracy1)
+
+    #train_c, train_w = m.evaluate_network(X_train2, y_train2)
+    #training_accuracy2 = train_c / ( train_c + train_w)
+    #print("Network's training2 accuracy: ", training_accuracy2)
 
     test_c, test_w = m.evaluate_network(X_test, y_test)
     testing_accuracy = test_c / ( test_c + test_w)
     print("**Network's testing accuracy: ", testing_accuracy)
 
-    era[e + 1] = {"Training Accuracy": training_accuracy1,
+    era[e + 1] = {"Training Accuracy1": training_accuracy1,
+                  #"Training Accuracy2": training_accuracy2,
                   "Testing Accuracy": testing_accuracy}
 
+print("\nConfusion Matrix for train1:\n", m.confusion_matrix(X_train1, y_train1))
+#print("\nConfusion Matrix for train2:\n", m.confusion_matrix(X_train2, y_train2))
 
-###########Printing Perceptron's Training Results ############################
-print("\nConfusion Matrix:\n")#, m.confusion_matrix(X_train, y_train))
-m.display_confusion(m.confusion_matrix(X_test, y_test))
-                    
 train1 = []
+#train2 = []
 test = []
 
 print("=" * 31 + "Summary" + "=" * 31)
 for i, acc in era.items():
     print(i, acc)
-    train1.append(acc['Training Accuracy'])
+    train1.append(acc['Training Accuracy1'])
+    #train2.append(acc['Training Accuracy2'])
     test.append(acc['Testing Accuracy'])
 print("=" * 69)
 
 """ Generating a line graph to measure the network's level of accuracy. """
-plt.plot(train1, 'b', test, 'r')
+plt.plot(train1, 'b', test, 'r')#train2, 'm', test, 'r')
 plt.figure(1)
-plt.legend(['train1', 'test'])
+plt.legend(['train1', 'test'])#,'train2', 'test'])
 plt.title("MNIST Challenge")
 plt.ylabel("Accuracy Percentage")
 plt.xlabel("Epochs")
 #plt.savefig("results.png")
 plt.show()
 
+"""
+End of Experiment 1 and 2
+"""
